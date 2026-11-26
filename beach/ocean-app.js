@@ -12,8 +12,9 @@ import { mergeInputs, readGamepadInput } from "./gamepad-input.mjs";
 import { createMaritimeWildlife } from "./maritime-wildlife.js";
 import { createMaritimeFireflies } from "./maritime-fireflies.js";
 import { createMaritimeAudio } from "./maritime-audio.js";
+import { createStormFX } from "./storm-fx.js";
 
-const CACHE_VERSION = "punk23";
+const CACHE_VERSION = "punk24";
 const FLOOR = { size: 9000, segments: 288, deepDepth: 52, beachHeight: 6 };
 const COVE = { x: 0, z: 520, radius: 150 };
 const ISLAND = { x: 349, z: 501, radius: 90 };
@@ -58,59 +59,51 @@ function helmStep(state, input, dt) {
 
 function bayPreset() {
   const p = JSON.parse(JSON.stringify(PRESETS.tropical));
-  p.name = "Cove";
-  p.sun = { elevation: 16, azimuth: 210, color: 0xffb070, intensity: 0.7 };
+  p.name = "Tempest";
+  p.sun = { elevation: 13, azimuth: 255, color: 0xa8b8c8, intensity: 0.6 };
   p.sky = {
-    zenithColor: 0x1a1240,
-    horizonColor: 0x6a3a4a,
-    groundColor: 0x0c0814,
-    rayleigh: 1.05,
-    cloudCoverage: 0.62,
-    cloudColor: 0x7a4068,
-    cloudSpeed: 0.015,
-    exposure: 1.2,
+    zenithColor: 0x141c26,
+    horizonColor: 0x5c6a76,
+    groundColor: 0x0a0e13,
+    rayleigh: 0.5,
+    cloudCoverage: 0.9,
+    cloudColor: 0x6e7883,
+    cloudSpeed: 0.045,
+    exposure: 1.05,
   };
-  p.ocean = JSON.parse(JSON.stringify(PRESETS.clear.ocean));
-  // Water Pro ideas (docs.threejswaterpro.com): a coarse ~1 km swell cascade pushes
-  // tiling past the horizon, choppiness ~1.2 stays natural, and a layered swell
-  // train reads larger than any single wave height.
+  // Ocean: tropical FFT base (known-good shader), storm-tuned look.
   p.ocean.cascades[0].patchSize = 760;
-  p.ocean.cascades[0].waveHeight *= 1.5;
-  p.ocean.cascades[0].choppiness = 1.18;
-  p.ocean.cascades[0].windSpeed = Math.max(9, p.ocean.cascades[0].windSpeed);
-  p.ocean.cascades[1].waveHeight *= 1.3;
-  p.ocean.cascades[1].choppiness *= 1.12;
+  p.ocean.cascades[0].waveHeight *= 1.35;
+  p.ocean.cascades[0].choppiness = 1.22;
+  p.ocean.cascades[0].windSpeed = Math.max(10, p.ocean.cascades[0].windSpeed);
+  p.ocean.cascades[1].waveHeight *= 1.2;
+  p.ocean.cascades[1].choppiness *= 1.15;
   const swell = (deg, wavelength, amplitude, steepness = 0.42, speed = 1) => {
     const a = (deg * Math.PI) / 180;
     return { direction: [Math.cos(a), Math.sin(a)], wavelength, amplitude, steepness, speed };
   };
   p.ocean.gerstner = [
-    swell(38, 240, 0.62, 0.42, 0.9),
-    swell(52, 130, 0.3, 0.38),
-    swell(24, 64, 0.16, 0.34),
+    swell(38, 240, 0.7, 0.46, 0.9),
+    swell(52, 130, 0.38, 0.44),
+    swell(24, 64, 0.2, 0.4),
   ];
   p.water = JSON.parse(JSON.stringify(PRESETS.tropical.water));
-  p.water.crestFoam = 0.32;
-  p.water.foamScale = 2.2;
-  p.water.shoreFoamStrength = 1.05;
-  p.water.shoreDepth = 2.6;
-  p.water.waterColor = 0x0a3a48;
-  p.water.absorptionColor = [1.4, 1.55, 1.25];
-  p.water.foamColor = 0xd8e6ec;
-  p.water.sunShininess = 380;
-  p.water.refractionStrength = 0.55;
-  p.water.sssStrength = 0.38;
-  p.water.sssColor = 0x0a6a62;
+  p.water.crestFoam = 0.34;
+  p.water.foamScale = 2.3;
+  p.water.shoreFoamStrength = 1.15;
+  p.water.shoreDepth = 2.5;
+  p.water.waterColor = 0x2a4a58;
+  p.water.absorptionColor = [0.95, 1.2, 1.3];
+  p.water.foamColor = 0xdde6ea;
+  p.water.sunShininess = 300;
+  p.water.sssStrength = 0.3;
+  p.water.sssColor = 0x0e5a64;
   p.floor = JSON.parse(JSON.stringify(PRESETS.lagoon.floor));
-  p.floor.sandShallow = 0x2a4a52;
-  p.floor.sandDeep = 0x061018;
-  p.floor.causticIntensity = 0.35;
-  p.sky.zenithColor = 0x1a1240;
-  p.sky.horizonColor = 0x6a3a4a;
-  p.sky.cloudCoverage = 0.62;
-  p.sky.cloudColor = 0x7a4068;
-  p.sky.exposure = 1.2;
-  p.fog = { color: 0x120c1c, density: 0.0011 };
+  p.floor.sandShallow = 0x27404e;
+  p.floor.sandDeep = 0x050c12;
+  p.floor.causticIntensity = 0.22;
+  p.floor.causticColor = 0x9fc4cc;
+  p.fog = { color: 0x101a22, density: 0.0007 };
   return p;
 }
 
@@ -279,7 +272,7 @@ async function boot() {
   renderer.setSize(window.innerWidth, window.innerHeight, false);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.15;
+  renderer.toneMappingExposure = 1.12;
   renderer.shadowMap.enabled = true;
 
   let worldResponse;
@@ -303,8 +296,8 @@ async function boot() {
   worldColliders = flattenColliders(worldData.islands);
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0c0618);
-  scene.fog = new THREE.FogExp2(0x49313a, 0.00022);
+  scene.background = new THREE.Color(0x0d141b);
+  scene.fog = new THREE.FogExp2(0x101a22, 0.00065);
   scene.environmentIntensity = 0.16;
 
   const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.5, 12000);
@@ -313,8 +306,8 @@ async function boot() {
     quality: {
       simSize: hasGpu ? 256 : 128,
       segments: hasGpu ? 720 : 360,
-      detail: hasGpu ? 0.8 : 0.35,
-      sparkle: 2.6,
+      detail: hasGpu ? 0.65 : 0.35,
+      sparkle: 1.0,
       refraction: true,
       foamDetail: true,
       clouds: true,
@@ -334,7 +327,7 @@ async function boot() {
   scene.add(floor.mesh);
 
   const sunDir = water.skyUniforms.sunDirection.value.clone();
-  const sun = new THREE.DirectionalLight(0xffc090, 1.4);
+  const sun = new THREE.DirectionalLight(0xffa668, 1.15);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
   sun.shadow.camera.near = 4;
@@ -347,21 +340,21 @@ async function boot() {
   sun.target = new THREE.Object3D();
   scene.add(sun);
   scene.add(sun.target);
-  scene.add(new THREE.HemisphereLight(0x4a1860, 0x061018, 0.12));
-  scene.add(new THREE.AmbientLight(0x201018, 0.05));
-  const neonMag = new THREE.PointLight(0xff2bd6, 400, 320, 2);
+  scene.add(new THREE.HemisphereLight(0x4a5e72, 0x0e141c, 0.52));
+  scene.add(new THREE.AmbientLight(0x22303e, 0.24));
+  const neonMag = new THREE.PointLight(0xff6a2a, 90, 300, 2);
   neonMag.position.set(ISLAND.x - 175, 40, ISLAND.z + 42);
-  const neonCyan = new THREE.PointLight(0x22f6ff, 280, 280, 2);
+  const neonCyan = new THREE.PointLight(0x3a7a96, 70, 280, 2);
   neonCyan.position.set(ISLAND.x + 162, 22, ISLAND.z - 35);
   scene.add(neonMag);
   scene.add(neonCyan);
-  const calderaLight = new THREE.PointLight(0xff5518, 800, 260, 2);
+  const calderaLight = new THREE.PointLight(0xff5a1e, 620, 280, 2);
   calderaLight.position.set(ISLAND.x + 24.3, 26, ISLAND.z + 4.7);
   scene.add(calderaLight);
   const beacons = [];
   for (const island of worldData.islands) {
     if (!island.beacon) continue;
-    const beaconLight = new THREE.PointLight(island.id === "skull-island" ? 0xff5518 : 0xff9a62, 135, 720, 2);
+    const beaconLight = new THREE.PointLight(island.id === "skull-island" ? 0xff5a1e : 0xd8a05a, 110, 760, 2);
     beaconLight.position.set(island.x + island.beacon[0], island.beacon[2], island.z + island.beacon[1]);
     scene.add(beaconLight);
     beacons.push({
@@ -371,7 +364,7 @@ async function boot() {
       offset: [...island.id].reduce((hash, ch) => (hash * 31 + ch.charCodeAt(0)) % 97, 7) / 97,
     });
   }
-  const faceKey = new THREE.DirectionalLight(0xffa060, 2.2);
+  const faceKey = new THREE.DirectionalLight(0xffb080, 2.1);
   faceKey.position.set(ISLAND.x - 190, 98, ISLAND.z - 46);
   faceKey.target.position.set(ISLAND.x, 24, ISLAND.z);
   scene.add(faceKey);
@@ -472,9 +465,9 @@ async function boot() {
           m.emissive = new THREE.Color(0, 0, 0);
           m.emissiveIntensity = 0;
         } else if (m.roughness !== undefined) {
-          m.roughness = Math.max(m.roughness || 0.8, 0.92);
-          // island is lit by sun/faceKey/caldera/neons; env adds a teal haze
-          m.envMapIntensity = 0;
+          m.roughness = Math.max(0.55, Math.min(m.roughness || 0.8, 0.9));
+          // wet storm rock catches a little env sheen
+          m.envMapIntensity = 0.3;
         }
       });
     });
@@ -538,6 +531,7 @@ async function boot() {
   scene.add(wakeGroup);
   const timer = new THREE.Timer();
   timer.connect(document);
+  const freecam = { on: false, yaw: 0, pitch: 0.32, pos: new THREE.Vector3(), speed: 26 };
   let wildlife = null;
   let fireflies = null;
   let audio = null;
@@ -550,8 +544,8 @@ async function boot() {
     const color = scenePass.getTextureNode("output");
     const tight = bloom(color, 0.65, 0.22, 0.92);
     const wide = bloom(color, 0.28, 0.55, 0.8);
-    let graded = color.rgb.mul(vec3(1.02, 0.98, 1.06));
-    graded = saturation(graded, 1.12);
+    let graded = color.rgb.mul(vec3(0.97, 1.0, 1.12));
+    graded = saturation(graded, 1.04);
     graded = graded.sub(0.5).mul(1.1).add(0.5);
     const vig = smoothstep(float(0.95), float(0.4), length(screenUV.sub(0.5)));
     graded = graded.mul(mix(float(0.72), float(1.0), vig));
@@ -584,6 +578,15 @@ async function boot() {
     else if (code === "KeyS" || code === "ArrowDown" || key === "s") keys.back = down;
     else if (code === "KeyA" || code === "ArrowLeft" || key === "a") keys.left = down;
     else if (code === "KeyD" || code === "ArrowRight" || key === "d") keys.right = down;
+    else if (code === "KeyC" && down) {
+      freecam.on = !freecam.on;
+      if (freecam.on) {
+        freecam.pos.copy(camera.position);
+        freecam.yaw = orbit.yaw + shipState.yaw + Math.PI;
+        freecam.pitch = orbit.pitch;
+      }
+      return;
+    }
     else return;
     if (down) e.preventDefault();
   }
@@ -606,14 +609,23 @@ async function boot() {
     const dy = e.clientY - orbit.ly;
     orbit.lx = e.clientX;
     orbit.ly = e.clientY;
-    orbit.yaw -= dx * 0.005;
-    orbit.pitch = Math.max(0.06, Math.min(1.15, orbit.pitch + dy * 0.004));
+    if (freecam.on) {
+      freecam.yaw -= dx * 0.005;
+      freecam.pitch = Math.max(-1.2, Math.min(1.35, freecam.pitch + dy * 0.004));
+    } else {
+      orbit.yaw -= dx * 0.005;
+      orbit.pitch = Math.max(0.06, Math.min(1.15, orbit.pitch + dy * 0.004));
+    }
   });
   canvas.addEventListener(
     "wheel",
     (e) => {
       e.preventDefault();
-      orbit.dist = Math.max(18, Math.min(220, orbit.dist + e.deltaY * 0.05));
+      if (freecam.on) {
+        freecam.speed = Math.max(4, Math.min(120, freecam.speed + e.deltaY * -0.06));
+      } else {
+        orbit.dist = Math.max(18, Math.min(220, orbit.dist + e.deltaY * 0.05));
+      }
     },
     { passive: false }
   );
@@ -667,6 +679,16 @@ async function boot() {
         return;
       }
     }
+    if (freecam.on) {
+      const look = new THREE.Vector3(
+        Math.sin(freecam.yaw) * Math.cos(freecam.pitch),
+        Math.sin(freecam.pitch),
+        Math.cos(freecam.yaw) * Math.cos(freecam.pitch)
+      );
+      camera.position.copy(freecam.pos);
+      camera.lookAt(freecam.pos.clone().add(look));
+      return;
+    }
     const y = shipRoot ? shipRoot.position.y : 0;
     const focus = new THREE.Vector3(shipState.x, y + 4.2, shipState.z);
     const cy = Math.sin(orbit.pitch) * orbit.dist + 3.2;
@@ -717,15 +739,36 @@ async function boot() {
       }
       sun.position.copy(shipRoot.position).addScaledVector(sunDir, 90);
       sun.target.position.copy(shipRoot.position);
+      shipRoot.userData.speed = shipState.speed;
+      shipRoot.userData.bow = bow;
     }
     // Occulting flash, one blink per four seconds per beacon, de-synced per island.
     for (const beacon of beacons) {
       const t = (elapsed * 0.25 + beacon.offset) % 1;
       beacon.light.intensity = beacon.base * (t < 0.1 ? 1.5 : 0.22);
     }
+    if (freecam.on) {
+      const look = new THREE.Vector3(
+        Math.sin(freecam.yaw) * Math.cos(freecam.pitch),
+        Math.sin(freecam.pitch),
+        Math.cos(freecam.yaw) * Math.cos(freecam.pitch)
+      );
+      const right = new THREE.Vector3(-look.z, 0, look.x).normalize();
+      const mv = new THREE.Vector3();
+      if (input.forward) mv.add(look);
+      if (input.back) mv.sub(look);
+      if (input.left) mv.add(right);
+      if (input.right) mv.sub(right);
+      if (mv.lengthSq() > 0) {
+        mv.normalize().multiplyScalar(freecam.speed * dt);
+        freecam.pos.add(mv);
+      }
+      freecam.pos.y = Math.max(2.5, freecam.pos.y);
+    }
     if (wildlife) wildlife.update(elapsed, shipState);
     if (fireflies) fireflies.update(elapsed);
     if (audio) audio.update(elapsed, { ...shipState, yaw: shipState.yaw }, wildlife?.audioEntities || []);
+    if (stormFx) stormFx.update(elapsed, dt, camera, shipRoot);
     water.update(elapsed, camera);
     placeCamera();
     if (pipeline) pipeline.render();
@@ -784,6 +827,16 @@ async function boot() {
   } catch (err) {
     console.warn("audio", err);
   }
+  let stormFx = null;
+  try {
+    stormFx = createStormFX(THREE, scene, {
+      heightAt: (x, z) => floorHeightWorld(x, z, floor.mesh.position),
+      islands: worldData.islands,
+      anchors: [{ x: 12, z: 548 }, { x: -30, z: 540 }],
+    });
+  } catch (err) {
+    console.warn("storm-fx", err);
+  }
   try {
     const gltf = await loader.loadAsync("beach/dutch-ship.glb");
     const root = gltf.scene.getObjectByName("SHIP") || gltf.scene;
@@ -803,6 +856,7 @@ async function boot() {
     });
     scene.add(root);
     shipRoot = root;
+    if (stormFx) stormFx.attachShip(root);
     const spin = document.getElementById("loadingIndicator");
     if (spin) spin.style.display = "none";
     canvas.focus();
@@ -811,6 +865,8 @@ async function boot() {
     return;
   }
 
+  const lookQ = new URLSearchParams(window.location.search).get("look");
+  if (lookQ) window.__beachLook = lookQ === "island" ? "island" : "destination:" + lookQ;
   fit();
   renderer.setAnimationLoop(frame);
 }
