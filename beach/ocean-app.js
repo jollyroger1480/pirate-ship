@@ -5,7 +5,7 @@ import {
 } from "three/tsl";
 import { bloom } from "three/addons/tsl/display/BloomNode.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
+import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { Water, createOceanFloor, PRESETS } from "threejs-water-free";
 import { flattenColliders, resolveCoast } from "./world-collision.mjs";
 import { mergeInputs, readGamepadInput } from "./gamepad-input.mjs";
@@ -14,10 +14,26 @@ import { createMaritimeFireflies } from "./maritime-fireflies.js";
 import { createMaritimeAudio } from "./maritime-audio.js";
 import { createStormFX } from "./storm-fx.js";
 
-const CACHE_VERSION = "punk24";
+const CACHE_VERSION = "banner12";
 const FLOOR = { size: 9000, segments: 288, deepDepth: 52, beachHeight: 6 };
+// One grid covers the whole seabed. Warp it so cells are about a metre wide
+// over the cove and skull island shelves, where clear water shows the bottom,
+// and grow toward the edges where the deep is opaque anyway.
+const FLOOR_FOCUS = { x: 170, z: 500, power: 2.4 };
 const COVE = { x: 0, z: 520, radius: 150 };
 const ISLAND = { x: 349, z: 501, radius: 90 };
+// Fixed framing that matches the README banner (?look=banner). The ship starts
+// in front-left of the island and cruises toward it under way, so bow foam,
+// wake and the dolphin pod are live; the camera sits off its starboard quarter,
+// low over the water, a little wider than the play camera.
+const BANNER_SHOT = {
+  ship: { x: 56, z: 425, yaw: 1.222 },
+  cruise: 12,
+  // the ship sails 65 m during the 5 s warm-up, so the camera sits ahead of
+  // the start (negative back) to meet it there, between camera and island
+  back: -23, side: 34, height: 12, fov: 55,
+  aim: { x: 299, y: 10.5, z: -28 },
+};
 let worldData = null;
 let worldColliders = [];
 
@@ -59,51 +75,49 @@ function helmStep(state, input, dt) {
 
 function bayPreset() {
   const p = JSON.parse(JSON.stringify(PRESETS.tropical));
-  p.name = "Tempest";
-  p.sun = { elevation: 13, azimuth: 255, color: 0xa8b8c8, intensity: 0.6 };
+  p.name = "Late Afternoon";
+  // Sun low on the right of the banner framing. Library azimuth runs from +x
+  // toward +z; the banner camera looks along about -9 deg with its right edge
+  // at 31 deg, so 40 deg keeps the disc just outside the frame and pulls the
+  // glitter path into the right third.
+  p.sun = { elevation: 13, azimuth: 40, color: 0xffe8c4, intensity: 1.8 };
   p.sky = {
-    zenithColor: 0x141c26,
-    horizonColor: 0x5c6a76,
-    groundColor: 0x0a0e13,
-    rayleigh: 0.5,
-    cloudCoverage: 0.9,
-    cloudColor: 0x6e7883,
-    cloudSpeed: 0.045,
-    exposure: 1.05,
+    zenithColor: 0x1a58b0,
+    horizonColor: 0xd6e2ea,
+    groundColor: 0x8fb0c4,
+    rayleigh: 1.3,
+    cloudCoverage: 0.42,
+    cloudColor: 0xfff3e0,
+    cloudSpeed: 0.012,
+    exposure: 1.0,
   };
-  // Ocean: tropical FFT base (known-good shader), storm-tuned look.
+  // Ocean: tropical FFT base with one long, low swell and half the fine
+  // ripples, which wove a visible grid at distance. The wide patch stops the
+  // swell tiling across the 11 km water extent.
   p.ocean.cascades[0].patchSize = 760;
-  p.ocean.cascades[0].waveHeight *= 1.35;
-  p.ocean.cascades[0].choppiness = 1.22;
-  p.ocean.cascades[0].windSpeed = Math.max(10, p.ocean.cascades[0].windSpeed);
-  p.ocean.cascades[1].waveHeight *= 1.2;
-  p.ocean.cascades[1].choppiness *= 1.15;
+  p.ocean.cascades[1].waveHeight *= 0.5;
   const swell = (deg, wavelength, amplitude, steepness = 0.42, speed = 1) => {
     const a = (deg * Math.PI) / 180;
     return { direction: [Math.cos(a), Math.sin(a)], wavelength, amplitude, steepness, speed };
   };
-  p.ocean.gerstner = [
-    swell(38, 240, 0.7, 0.46, 0.9),
-    swell(52, 130, 0.38, 0.44),
-    swell(24, 64, 0.2, 0.4),
-  ];
+  p.ocean.gerstner = [swell(38, 240, 0.35, 0.42, 0.9)];
+  // Deep blue over a pale sand floor: turquoise where it is shallow.
   p.water = JSON.parse(JSON.stringify(PRESETS.tropical.water));
-  p.water.crestFoam = 0.34;
-  p.water.foamScale = 2.3;
-  p.water.shoreFoamStrength = 1.15;
-  p.water.shoreDepth = 2.5;
-  p.water.waterColor = 0x2a4a58;
-  p.water.absorptionColor = [0.95, 1.2, 1.3];
-  p.water.foamColor = 0xdde6ea;
-  p.water.sunShininess = 300;
-  p.water.sssStrength = 0.3;
-  p.water.sssColor = 0x0e5a64;
+  p.water.crestFoam = 0.1;
+  p.water.foamScale = 1.4;
+  p.water.shoreFoamStrength = 1.0;
+  p.water.shoreDepth = 2.2;
+  p.water.waterColor = 0x0a3a6e;
+  p.water.sssColor = 0x1fb8a6;
+  p.water.sunShininess = 480;
+  p.water.sssStrength = 0.5;
   p.floor = JSON.parse(JSON.stringify(PRESETS.lagoon.floor));
-  p.floor.sandShallow = 0x27404e;
-  p.floor.sandDeep = 0x050c12;
-  p.floor.causticIntensity = 0.22;
-  p.floor.causticColor = 0x9fc4cc;
-  p.fog = { color: 0x101a22, density: 0.0007 };
+  // library default is 0.08: 12.5 m caustic cells read as a checkerboard
+  // through clear water
+  p.floor.causticScale = 0.7;
+  p.floor.causticIntensity = 0.6;
+  p.floor.causticColor = 0xeafff4;
+  p.fog = { color: 0xbfd3e2, density: 0.00045 };
   return p;
 }
 
@@ -127,7 +141,7 @@ function floorHeightWorld(wx, wz, floorPos) {
   const fieldFade = Math.max(0, 1 - Math.hypot(fieldX, fieldZ - 220) / (FLOOR.size * 0.55));
   y += Math.sin(fieldX * 0.0018 + fieldZ * 0.0011) * 2.2 * fieldFade;
   y += Math.sin(fieldZ * 0.006 - fieldX * 0.002) * 0.45 * fieldFade;
-  for (const island of worldData?.islands || []) {
+  for (const island of [...(worldData?.islands || []), ...(worldData?.backdrop || [])]) {
     const shelfX = island.landOffset ? island.x + island.landOffset[0] : island.x;
     const shelfZ = island.landOffset ? island.z + island.landOffset[1] : island.z;
     if (Math.abs(fieldX - shelfX) > island.shelfRadius + 80 ||
@@ -135,7 +149,10 @@ function floorHeightWorld(wx, wz, floorPos) {
     const ir = Math.hypot(fieldX - shelfX, fieldZ - shelfZ);
     const t = Math.max(0, Math.min(1, (ir / island.shelfRadius - 0.55) / 0.45));
     const shelfWeight = 1 - t * t * (3 - 2 * t);
-    y = Math.max(y, -14 + 9 * shelfWeight);
+    // [seabed away from the shelf, rise over the shelf]. The skull island
+    // drops to deep water sooner so the banner's foreground stays blue.
+    const shelf = island.id === "skull-island" ? [-40, 35] : [-14, 9];
+    y = Math.max(y, shelf[0] + shelf[1] * shelfWeight);
     for (const shoalBand of island.shoals || []) {
       const sx = fieldX - island.x - shoalBand.x;
       const sz = fieldZ - island.z - shoalBand.z;
@@ -143,10 +160,9 @@ function floorHeightWorld(wx, wz, floorPos) {
       if (q < 1) y = Math.max(y, -4.8 + (1 - q) * 1.7);
     }
     if (island.id === "skull-island") {
-      if (ir > 60 && ir < 250) {
-        const ring = 1 - Math.abs(ir - 120) / 80;
-        y = Math.max(y, -3.2 + ring * 2.4);
-      }
+      // turquoise bar hugging the coast: crest 118 m out, 20 m down by 180 m
+      const ring = 1 - Math.abs(ir - 118) / 62;
+      if (ring > 0) y = Math.max(y, -20 + ring * 16.2);
     }
   }
   return y;
@@ -154,8 +170,14 @@ function floorHeightWorld(wx, wz, floorPos) {
 
 function sculptCove(geometry) {
   const pos = geometry.attributes.position;
+  const half = FLOOR.size / 2;
+  const warp = (d) => Math.sign(d) * (Math.abs(d) / half) ** FLOOR_FOCUS.power * half;
   for (let i = 0; i < pos.count; i++) {
-    pos.setY(i, floorHeightWorld(pos.getX(i), pos.getZ(i), { x: 0, z: 0 }));
+    const wx = warp(pos.getX(i) - FLOOR_FOCUS.x) + FLOOR_FOCUS.x;
+    const wz = warp(pos.getZ(i) - FLOOR_FOCUS.z) + FLOOR_FOCUS.z;
+    pos.setX(i, wx);
+    pos.setZ(i, wz);
+    pos.setY(i, floorHeightWorld(wx, wz, { x: 0, z: 0 }));
   }
   geometry.computeVertexNormals();
 }
@@ -171,13 +193,15 @@ function failOver(err) {
   }
 }
 
-async function loadEnv(scene, renderer) {
-  const hdr = await new HDRLoader().loadAsync("beach/env.hdr");
-  hdr.mapping = THREE.EquirectangularReflectionMapping;
+function loadEnv(scene, renderer, skyMesh) {
+  // Bake the live procedural sky: the bundled dusk HDR tinted every daylight
+  // surface teal, and the sky already matches the sun and clouds the water
+  // reflects.
+  const stage = new THREE.Scene();
+  stage.add(skyMesh.clone());
   const pmrem = new THREE.PMREMGenerator(renderer);
-  const env = pmrem.fromEquirectangular(hdr);
+  const env = pmrem.fromScene(stage, 0.04, 1, 10000);
   scene.environment = env.texture || env;
-  hdr.dispose();
 }
 
 function makeChest() {
@@ -220,6 +244,125 @@ function prepMesh(root) {
   });
 }
 
+const TRUNK_MAT = new THREE.MeshStandardMaterial({ color: 0x5a3a22, roughness: 0.9 });
+const LEAF_MAT = new THREE.MeshStandardMaterial({
+  color: 0x1c6a2c, roughness: 0.78, side: THREE.DoubleSide, envMapIntensity: 0.45,
+});
+
+function palmTrunk() {
+  const geo = new THREE.CylinderGeometry(0.16, 0.32, 6.8, 6);
+  geo.translate(0, 3.3, 0);
+  return geo;
+}
+
+// one drooping frond: flat at the root, tapering and falling away
+function palmFrond(angle) {
+  const geo = new THREE.PlaneGeometry(1.35, 5.2, 1, 7);
+  geo.rotateX(-Math.PI / 2);
+  const pos = geo.attributes.position;
+  for (let v = 0; v < pos.count; v++) {
+    const t = (pos.getZ(v) + 2.6) / 5.2;
+    pos.setX(v, pos.getX(v) * (1 - t * 0.8));
+    pos.setY(v, Math.sin(t * Math.PI) * 0.7 - t * t * 3.3);
+  }
+  geo.computeVertexNormals();
+  geo.rotateY(angle);
+  geo.translate(0, 6.45, 0);
+  return geo;
+}
+
+function palmCrown() {
+  return mergeGeometries(
+    Array.from({ length: 9 }, (_, i) => palmFrond((i / 9) * Math.PI * 2))
+  );
+}
+
+// Jungle for the skull island. The Blender pack script exports where the
+// jungle material is (skull-plants.json); lumpy canopy clumps and palms are
+// instanced from that table, so the scatter matches the terrain exactly and
+// the whole jungle is three draw calls.
+async function plantJungle(island) {
+  const response = await fetch(`beach/skull-plants.json?v=${CACHE_VERSION}`);
+  if (!response.ok) throw new Error("plant table HTTP " + response.status);
+  const table = await response.json();
+  const dummy = new THREE.Object3D();
+  const tint = new THREE.Color();
+
+  const clump = new THREE.IcosahedronGeometry(1, 2);
+  const p = clump.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const k = 0.78 + 0.44 * Math.abs(Math.sin(p.getX(i) * 7.1 + p.getY(i) * 5.3 + p.getZ(i) * 9.7));
+    p.setXYZ(i, p.getX(i) * k, p.getY(i) * k, p.getZ(i) * k);
+  }
+  clump.computeVertexNormals();
+  const canopy = new THREE.InstancedMesh(
+    clump,
+    new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.92, flatShading: true }),
+    table.canopy.length
+  );
+  table.canopy.forEach(([x, y, z, s, spin], i) => {
+    dummy.position.set(x, y, z);
+    dummy.rotation.set(0, spin, 0);
+    dummy.scale.set(s, s * 0.62, s);
+    dummy.updateMatrix();
+    canopy.setMatrixAt(i, dummy.matrix);
+    canopy.setColorAt(i, tint.setHSL(0.29 + 0.03 * Math.sin(i * 12.99), 0.55, 0.045 + 0.05 * Math.abs(Math.sin(i * 78.23))));
+  });
+  island.add(canopy);
+
+  const trunks = new THREE.InstancedMesh(palmTrunk(), TRUNK_MAT, table.palm.length);
+  const crowns = new THREE.InstancedMesh(palmCrown(), LEAF_MAT, table.palm.length);
+  table.palm.forEach(([x, y, z, s, spin], i) => {
+    dummy.position.set(x, y, z);
+    dummy.rotation.set(0, spin, 0);
+    dummy.scale.setScalar(s);
+    dummy.updateMatrix();
+    trunks.setMatrixAt(i, dummy.matrix);
+    crowns.setMatrixAt(i, dummy.matrix);
+    crowns.setColorAt(i, tint.setScalar(0.8 + 0.4 * Math.abs(Math.sin(i * 39.3))));
+  });
+  island.add(trunks, crowns);
+}
+
+// Steep little rock islands (manifest kind "rock-islet"): the banner's hazy
+// backdrop. One lumpy cone each, jungle green at the base and bare rock above
+// through vertex colours on flat-shaded faces.
+function makeRockIslet(islet) {
+  const height = islet.radius * 1.3;
+  const geo = new THREE.ConeGeometry(islet.radius * 0.55, height, 28, 8).toNonIndexed();
+  geo.translate(0, height / 2 - 4, 0);
+  const pos = geo.attributes.position;
+  const col = new Float32Array(pos.count * 3);
+  const jungle = new THREE.Color(0x2a5518);
+  const rock = new THREE.Color(0x7a7066);
+  const haze = new THREE.Color(0xbfd3e2);
+  const tint = new THREE.Color();
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+    const a = Math.atan2(z, x);
+    const up = Math.min(0.98, Math.max(0, (y + 4) / height));   // 0 waterline, 1 summit
+    // broad foot and a blunt spire instead of a pyramid, then crags
+    const flare = (1 - 0.75 * up ** 0.8) / (0.55 * (1 - up));
+    const k = flare * (1 + 0.3 * Math.sin(a * 3 + 1.3 + y * 0.03) + 0.18 * Math.sin(a * 7 + 0.4 - y * 0.05));
+    pos.setXYZ(i, x * k, y, z * k);
+    const t = Math.min(1, Math.max(0, (up - 0.2) / 0.22));
+    // pre-hazed toward the fog colour so they sit back like the banner's
+    tint.copy(jungle).lerp(rock, t).lerp(haze, 0.38);
+    col[i * 3] = tint.r;
+    col[i * 3 + 1] = tint.g;
+    col[i * 3 + 2] = tint.b;
+  }
+  geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+  geo.computeVertexNormals();
+  const mesh = new THREE.Mesh(
+    geo,
+    new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, flatShading: true })
+  );
+  mesh.position.set(islet.x, 0, islet.z);
+  mesh.name = islet.id;
+  return mesh;
+}
+
 async function boot() {
   const canvas = document.getElementById("view");
   canvas.tabIndex = 0;
@@ -238,7 +381,13 @@ async function boot() {
         try {
           const adapter = await navigator.gpu.requestAdapter();
           if (!adapter) throw new Error("WebGPU adapter unavailable (attempt " + attempt + ")");
-          const device = await adapter.requestDevice();
+          // The wave slope textures are 32-bit float. Without this optional
+          // feature WebGPU samples them nearest-neighbour, and every 3 m texel
+          // becomes one flat facet: a checkerboard of sky reflections.
+          const floatFilter = adapter.features.has("float32-filterable");
+          const device = await adapter.requestDevice(
+            floatFilter ? { requiredFeatures: ["float32-filterable"] } : undefined
+          );
           renderer = makeGpu(device);
           await renderer.init();
           backend = renderer.backend?.isWebGPUBackend === true ? "webgpu" : "webgl2";
@@ -272,7 +421,7 @@ async function boot() {
   renderer.setSize(window.innerWidth, window.innerHeight, false);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.12;
+  renderer.toneMappingExposure = 1.0;
   renderer.shadowMap.enabled = true;
 
   let worldResponse;
@@ -293,21 +442,30 @@ async function boot() {
     ISLAND.z = skullData.z;
     ISLAND.landX = skullData.x + (skullData.landOffset?.[0] || 0);
     ISLAND.landZ = skullData.z + (skullData.landOffset?.[1] || 0);
-  worldColliders = flattenColliders(worldData.islands);
+  // backdrop islets are scenery with collision and a seabed shelf, not
+  // destinations
+  worldColliders = flattenColliders([...worldData.islands, ...(worldData.backdrop || [])]);
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0d141b);
-  scene.fog = new THREE.FogExp2(0x101a22, 0.00065);
-  scene.environmentIntensity = 0.16;
+  scene.background = new THREE.Color(0xd2e0ea);
+  scene.fog = new THREE.FogExp2(0xbfd3e2, 0.00045);
+  scene.environmentIntensity = 0.6;
 
-  const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.5, 12000);
+  const lookQ = new URLSearchParams(window.location.search).get("look");
+  if (lookQ) {
+    window.__beachLook = /^(island|banner)$/.test(lookQ) ? lookQ : "destination:" + lookQ;
+  }
+  const camera = new THREE.PerspectiveCamera(
+    window.__beachLook === "banner" ? BANNER_SHOT.fov : 50,
+    window.innerWidth / window.innerHeight, 0.5, 12000
+  );
   const water = new Water({
     preset: bayPreset(),
     quality: {
       simSize: hasGpu ? 256 : 128,
       segments: hasGpu ? 720 : 360,
-      detail: hasGpu ? 0.65 : 0.35,
-      sparkle: 1.0,
+      detail: hasGpu ? 0.3 : 0.2,
+      sparkle: 0.35,
       refraction: true,
       foamDetail: true,
       clouds: true,
@@ -327,7 +485,7 @@ async function boot() {
   scene.add(floor.mesh);
 
   const sunDir = water.skyUniforms.sunDirection.value.clone();
-  const sun = new THREE.DirectionalLight(0xffa668, 1.15);
+  const sun = new THREE.DirectionalLight(0xffe6c4, 2.4);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
   sun.shadow.camera.near = 4;
@@ -340,40 +498,20 @@ async function boot() {
   sun.target = new THREE.Object3D();
   scene.add(sun);
   scene.add(sun.target);
-  scene.add(new THREE.HemisphereLight(0x4a5e72, 0x0e141c, 0.52));
-  scene.add(new THREE.AmbientLight(0x22303e, 0.24));
-  const neonMag = new THREE.PointLight(0xff6a2a, 90, 300, 2);
-  neonMag.position.set(ISLAND.x - 175, 40, ISLAND.z + 42);
-  const neonCyan = new THREE.PointLight(0x3a7a96, 70, 280, 2);
-  neonCyan.position.set(ISLAND.x + 162, 22, ISLAND.z - 35);
-  scene.add(neonMag);
-  scene.add(neonCyan);
-  const calderaLight = new THREE.PointLight(0xff5a1e, 620, 280, 2);
-  calderaLight.position.set(ISLAND.x + 24.3, 26, ISLAND.z + 4.7);
-  scene.add(calderaLight);
-  const beacons = [];
-  for (const island of worldData.islands) {
-    if (!island.beacon) continue;
-    const beaconLight = new THREE.PointLight(island.id === "skull-island" ? 0xff5a1e : 0xd8a05a, 110, 760, 2);
-    beaconLight.position.set(island.x + island.beacon[0], island.beacon[2], island.z + island.beacon[1]);
-    scene.add(beaconLight);
-    beacons.push({
-      id: island.id,
-      light: beaconLight,
-      base: beaconLight.intensity,
-      offset: [...island.id].reduce((hash, ch) => (hash * 31 + ch.charCodeAt(0)) % 97, 7) / 97,
-    });
-  }
-  const faceKey = new THREE.DirectionalLight(0xffb080, 2.1);
-  faceKey.position.set(ISLAND.x - 190, 98, ISLAND.z - 46);
-  faceKey.target.position.set(ISLAND.x, 24, ISLAND.z);
+  scene.add(new THREE.HemisphereLight(0xbcd6f0, 0x9a8a70, 0.45));
+  // The banner lights the skull from the camera's upper-left while its sun
+  // sits low on the right: the sun rims the rock, this key keeps the face
+  // readable instead of a silhouette. No shadows, so the sun still owns them.
+  const faceKey = new THREE.DirectionalLight(0xfff1dc, 0.9);
+  faceKey.position.set(ISLAND.x - 260, 240, ISLAND.z - 60);
+  faceKey.target.position.set(ISLAND.x, 70, ISLAND.z);
   scene.add(faceKey);
   scene.add(faceKey.target);
 
   try {
-    await loadEnv(scene, renderer);
+    loadEnv(scene, renderer, water.sky);
   } catch (err) {
-    console.warn("env.hdr", err);
+    console.warn("environment", err);
   }
 
   const loader = new GLTFLoader();
@@ -383,39 +521,18 @@ async function boot() {
   chest.rotation.y = 0.4;
   scene.add(chest);
 
-  const trunkMat = new THREE.MeshStandardMaterial({ color: 0x5a3a22, roughness: 0.9 });
-  const leafMat = new THREE.MeshStandardMaterial({
-    color: 0x1c6a2c, roughness: 0.78, side: THREE.DoubleSide, envMapIntensity: 0.45,
-  });
   function spitPalm(x, z, scale, yaw) {
     const g = new THREE.Group();
     const y = floorHeightWorld(x, z, floor.mesh.position);
-    const trunk = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.16 * scale, 0.32 * scale, 6.8 * scale, 6),
-      trunkMat
-    );
-    trunk.position.y = 3.3 * scale;
+    const trunk = new THREE.Mesh(palmTrunk(), TRUNK_MAT);
     trunk.rotation.z = 0.07;
     trunk.castShadow = true;
     g.add(trunk);
-    const half = 2.6 * scale;
-    for (let i = 0; i < 9; i++) {
-      const a = yaw + (i / 9) * Math.PI * 2;
-      const geo = new THREE.PlaneGeometry(1.35 * scale, 5.2 * scale, 1, 7);
-      geo.rotateX(-Math.PI / 2);
-      const pos = geo.attributes.position;
-      for (let v = 0; v < pos.count; v++) {
-        const t = (pos.getZ(v) + half) / (half * 2);
-        pos.setX(v, pos.getX(v) * (1 - t * 0.8));
-        pos.setY(v, Math.sin(t * Math.PI) * 0.7 * scale - t * t * 3.3 * scale);
-      }
-      geo.computeVertexNormals();
-      const fr = new THREE.Mesh(geo, leafMat);
-      fr.position.y = 6.45 * scale;
-      fr.rotation.y = a;
-      fr.castShadow = true;
-      g.add(fr);
-    }
+    const crown = new THREE.Mesh(palmCrown(), LEAF_MAT);
+    crown.rotation.y = yaw;
+    crown.castShadow = true;
+    g.add(crown);
+    g.scale.setScalar(scale);
     g.position.set(x, y - 0.15, z);
     scene.add(g);
   }
@@ -433,41 +550,13 @@ async function boot() {
     prepMesh(island);
     island.traverse((obj) => {
       if (!obj.isMesh || !obj.material) return;
-      if (/^(core|eye|flow)/i.test(obj.name || "")) {
-        obj.visible = false;
-        return;
-      }
-      const tag = `${obj.name || ""} ${obj.material.name || ""}`;
-      if (/^caldera/i.test(obj.name || "")) {
-        const src = Array.isArray(obj.material) ? obj.material[0] : obj.material;
-        const hot = src.clone();
-        hot.color = new THREE.Color(0.55, 0.06, 0.0);
-        hot.emissive = new THREE.Color(1.0, 0.32, 0.04);
-        hot.emissiveIntensity = 2.2;
-        hot.roughness = 0.4;
-        hot.toneMapped = true;
-        obj.material = hot;
-        return;
-      }
       (Array.isArray(obj.material) ? obj.material : [obj.material]).forEach((m) => {
-        const nm = (tag + (m.name || "")).toLowerCase();
         // double-sided: carved recess floors tilt away from high cameras
         // and FrontSide culling turned them into see-through holes
         m.side = THREE.DoubleSide;
-        if (/socket/.test(nm)) {
-          // voids: unlit near-black so the skull's shadow shapes never pick up
-          // env or specular tint
-          obj.material = new THREE.MeshBasicMaterial({ color: 0x000000, toneMapped: false });
-          return;
-        }
-        if (/lava|eye|flow|caldera/.test(nm)) {
-          m.color = new THREE.Color(0.05, 0.035, 0.03);
-          m.emissive = new THREE.Color(0, 0, 0);
-          m.emissiveIntensity = 0;
-        } else if (m.roughness !== undefined) {
-          m.roughness = Math.max(0.55, Math.min(m.roughness || 0.8, 0.9));
-          // wet storm rock catches a little env sheen
-          m.envMapIntensity = 0.3;
+        if (m.roughness !== undefined) {
+          m.roughness = Math.max(0.72, Math.min(m.roughness || 0.8, 0.95));
+          m.envMapIntensity = 0.25;
         }
       });
     });
@@ -484,6 +573,7 @@ async function boot() {
     ISLAND.radius = Math.max(box.max.x - box.min.x, box.max.z - box.min.z) * 0.46;
     window.__islandRoot = island;
     scene.add(island);
+    await plantJungle(island);
   } catch (err) {
     console.warn("skull-island", err);
   }
@@ -500,6 +590,7 @@ async function boot() {
       }
     });
     scene.add(archipelago);
+    for (const islet of worldData.backdrop || []) scene.add(makeRockIslet(islet));
     archipelagoLoaded = true;
     window.__archipelagoRoot = archipelago;
   } catch (err) {
@@ -510,7 +601,9 @@ async function boot() {
   }
 
   let shipRoot = null;
-  let shipState = { x: -20, z: 445, yaw: 1.42, speed: 0, yawRate: 0 };
+  let shipState = window.__beachLook === "banner"
+    ? { x: BANNER_SHOT.ship.x, z: BANNER_SHOT.ship.z, yaw: BANNER_SHOT.ship.yaw, speed: BANNER_SHOT.cruise, yawRate: 0 }
+    : { x: -20, z: 445, yaw: 1.42, speed: 0, yawRate: 0 };
   const keys = { forward: false, back: false, left: false, right: false };
   const orbit = { yaw: Math.PI * 0.96, pitch: 0.16, dist: 54, dragging: false, lx: 0, ly: 0 };
   const wakeGeometry = new THREE.RingGeometry(0.82, 1, 18);
@@ -542,15 +635,17 @@ async function boot() {
   try {
     const scenePass = pass(scene, camera);
     const color = scenePass.getTextureNode("output");
-    const tight = bloom(color, 0.65, 0.22, 0.92);
-    const wide = bloom(color, 0.28, 0.55, 0.8);
-    let graded = color.rgb.mul(vec3(0.97, 1.0, 1.12));
-    graded = saturation(graded, 1.04);
+    // Daylight: only the disc and glitter sit above 1.2, so bloom is a
+    // highlight halo instead of a wash over the whole sky.
+    const tight = bloom(color, 0.32, 0.2, 1.25);
+    const wide = bloom(color, 0.1, 0.5, 1.7);
+    let graded = color.rgb;
+    graded = saturation(graded, 1.12);
     graded = graded.sub(0.5).mul(1.1).add(0.5);
-    const vig = smoothstep(float(0.95), float(0.4), length(screenUV.sub(0.5)));
-    graded = graded.mul(mix(float(0.72), float(1.0), vig));
+    const vig = smoothstep(float(0.98), float(0.45), length(screenUV.sub(0.5)));
+    graded = graded.mul(mix(float(0.86), float(1.0), vig));
     const grain = fract(sin(dot(screenUV, vec2(190.0, 260.0)).add(time)).mul(43758.5453));
-    graded = graded.add(grain.sub(0.5).mul(0.008));
+    graded = graded.add(grain.sub(0.5).mul(0.004));
     pipeline = new THREE.RenderPipeline(renderer);
     pipeline.outputNode = vec4(graded, 1.0).add(tight).add(wide);
   } catch (err) {
@@ -663,9 +758,22 @@ async function boot() {
   });
 
   function placeCamera() {
+    if (window.__beachLook === "banner") {
+      const h = bowDir(BANNER_SHOT.ship.yaw);
+      const px = BANNER_SHOT.ship.x - BANNER_SHOT.back * h.x - BANNER_SHOT.side * h.z;
+      const pz = BANNER_SHOT.ship.z - BANNER_SHOT.back * h.z + BANNER_SHOT.side * h.x;
+      camera.position.set(px, BANNER_SHOT.height, pz);
+      camera.lookAt(
+        px + BANNER_SHOT.aim.x,
+        BANNER_SHOT.height + BANNER_SHOT.aim.y,
+        pz + BANNER_SHOT.aim.z
+      );
+      return;
+    }
     if (window.__beachLook === "island") {
-      camera.position.set(ISLAND.x - 280, 190, ISLAND.z + 24);
-      camera.lookAt(ISLAND.x + 34, 18, ISLAND.z - 8);
+      // sea-level 3/4 of the skull face: whole peak, beach and jungle line
+      camera.position.set(ISLAND.x - 320, 75, ISLAND.z - 30);
+      camera.lookAt(ISLAND.x, 68, ISLAND.z);
       return;
     }
     if (typeof window.__beachLook === "string" && window.__beachLook.startsWith("destination:")) {
@@ -707,6 +815,9 @@ async function boot() {
     const elapsed = timer.getElapsed();
     const padInput = pollGamepad();
     const input = mergeInputs(keys, padInput);
+    // banner shot: the ship holds cruising speed toward the island (the helm
+    // reads the numeric throttle before the forward flag)
+    if (window.__beachLook === "banner" && shipState.speed < BANNER_SHOT.cruise) input.throttle = 1;
     const cameraSpeed = dt * 1.45;
     orbit.yaw -= input.cameraX * cameraSpeed;
     orbit.pitch = Math.max(0.06, Math.min(1.15, orbit.pitch + input.cameraY * cameraSpeed));
@@ -741,11 +852,6 @@ async function boot() {
       sun.target.position.copy(shipRoot.position);
       shipRoot.userData.speed = shipState.speed;
       shipRoot.userData.bow = bow;
-    }
-    // Occulting flash, one blink per four seconds per beacon, de-synced per island.
-    for (const beacon of beacons) {
-      const t = (elapsed * 0.25 + beacon.offset) % 1;
-      beacon.light.intensity = beacon.base * (t < 0.1 ? 1.5 : 0.22);
     }
     if (freecam.on) {
       const look = new THREE.Vector3(
@@ -833,6 +939,8 @@ async function boot() {
       heightAt: (x, z) => floorHeightWorld(x, z, floor.mesh.position),
       islands: worldData.islands,
       anchors: [{ x: 12, z: 548 }, { x: -30, z: 540 }],
+      // daylight: the night layers stay off, bow spray and beach props stay on
+      rain: false, mist: false, glows: false, torches: false, lanternLights: false,
     });
   } catch (err) {
     console.warn("storm-fx", err);
@@ -865,8 +973,6 @@ async function boot() {
     return;
   }
 
-  const lookQ = new URLSearchParams(window.location.search).get("look");
-  if (lookQ) window.__beachLook = lookQ === "island" ? "island" : "destination:" + lookQ;
   fit();
   renderer.setAnimationLoop(frame);
 }
