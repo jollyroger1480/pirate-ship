@@ -52,21 +52,51 @@ export function resolveCoast(x, z, colliders, margin = 5) {
   let moved = false;
   let nx = 0;
   let nz = 0;
-  for (const collider of colliders) {
-    const orientation = signedArea(collider.points) >= 0 ? 1 : -1;
-    const edge = nearestEdge(x, z, collider.points, orientation);
-    if (!edge) continue;
-    const inside = pointInPolygon(x, z, collider.points);
-    if (inside || edge.distance < margin) {
-      const push = margin + (inside ? edge.distance : -edge.distance);
-      if (push > 0) {
-        x = edge.x + edge.nx * push;
-        z = edge.z + edge.nz * push;
-        moved = true;
-        nx = edge.nx;
-        nz = edge.nz;
+  // Push radially from the nearest point on the boundary, not along the edge
+  // normal: the old `projection + normal * push` reconstruction discarded the
+  // tangential offset, so a point near a vertex at d ~= margin snapped onto
+  // the boundary itself (a ship parked 7 m out could be slid onto the sand).
+  // Two passes handle the leftover case where one push lands within the
+  // margin of a neighbouring edge at a concave corner.
+  for (let pass = 0; pass < 2; pass++) {
+    let pushed = false;
+    for (const collider of colliders) {
+      const orientation = signedArea(collider.points) >= 0 ? 1 : -1;
+      const edge = nearestEdge(x, z, collider.points, orientation);
+      if (!edge) continue;
+      const inside = pointInPolygon(x, z, collider.points);
+      if (inside || edge.distance < margin) {
+        const target = margin + (inside ? edge.distance : -edge.distance);
+        if (target > 0) {
+          if (inside) {
+            // exit through the nearest edge along its outward normal: a radial
+            // exit from an interior point can re-enter a concave polygon
+            x = edge.x + edge.nx * target;
+            z = edge.z + edge.nz * target;
+          } else {
+            // push away from the nearest boundary point, keeping the
+            // tangential offset. The old `projection + normal * push`
+            // reconstruction discarded it, so a point near a vertex at
+            // d ~= margin snapped onto the boundary itself.
+            let dx = x - edge.x;
+            let dz = z - edge.z;
+            const len = Math.hypot(dx, dz);
+            if (len < 1e-6) {
+              dx = edge.nx;
+              dz = edge.nz;
+            }
+            const s = margin / Math.max(len, 1e-6);
+            x = edge.x + dx * s;
+            z = edge.z + dz * s;
+          }
+          pushed = true;
+          nx = edge.nx;
+          nz = edge.nz;
+        }
       }
     }
+    if (!pushed) break;
+    moved = true;
   }
   return { x, z, collided: moved, nx, nz };
 }
