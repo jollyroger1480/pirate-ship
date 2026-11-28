@@ -204,12 +204,13 @@ export function createWaterMaterial({ ocean, skyUniforms, timeNode, preset = {},
     let sceneColor;
     let depthR;
     if (F.refraction) {
+      // Local patch: one offset colour fetch. The upstream version also
+      // refetched the depth at the offset and tested it, which cost about
+      // 9 ms a frame at 1080p on a Radeon RX 480 for a wobble on submerged
+      // sand. The depth used for absorption stays the straight-down one.
       const offsetAmt = clamp(waterDepth.mul(0.05), 0.0, 1.0).mul(u.refractionStrength).mul(0.06);
-      const refractUV = screenUV.add(N.xz.mul(offsetAmt));
-      const sceneZR = perspectiveDepthToViewZ(viewportDepthTexture(refractUV), cameraNear, cameraFar);
-      const validR = step(sceneZR, surfaceZ); // refracted sample must be behind the surface
-      sceneColor = mix(viewportSharedTexture(screenUV), viewportSharedTexture(refractUV), validR);
-      depthR = mix(waterDepth, surfaceZ.sub(sceneZR).max(0.0), validR);
+      sceneColor = viewportSharedTexture(screenUV.add(N.xz.mul(offsetAmt)));
+      depthR = waterDepth;
     } else {
       sceneColor = viewportSharedTexture(screenUV);
       depthR = waterDepth;
@@ -232,7 +233,10 @@ export function createWaterMaterial({ ocean, skyUniforms, timeNode, preset = {},
     // Fresnel sky reflection + sun specular.
     const fres = clamp(fresnelSchlick(cosNV, u.fresnelF0), 0.0, 1.0);
     const R = reflect(V.negate(), N);
-    const reflSky = skyColor(R, skyUniforms, timeNode, F.clouds);
+    // Local patch: reflect the clear sky and sun glow only. Cloud noise per
+    // water fragment was this shader's costliest term and read as pale
+    // blotches at grazing angles.
+    const reflSky = skyColor(R, skyUniforms, timeNode, false);
     const spec = pow(max(dot(R, sunDir), 0.0), u.sunShininess)
       .mul(skyUniforms.sunColor)
       .mul(skyUniforms.sunIntensity)

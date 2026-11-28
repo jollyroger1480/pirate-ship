@@ -14,7 +14,7 @@ import { createMaritimeFireflies } from "./maritime-fireflies.js";
 import { createMaritimeAudio } from "./maritime-audio.js";
 import { createStormFX } from "./storm-fx.js";
 
-const CACHE_VERSION = "banner12";
+const CACHE_VERSION = "banner15";
 const FLOOR = { size: 9000, segments: 288, deepDepth: 52, beachHeight: 6 };
 // One grid covers the whole seabed. Warp it so cells are about a metre wide
 // over the cove and skull island shelves, where clear water shows the bottom,
@@ -36,6 +36,10 @@ const BANNER_SHOT = {
 };
 let worldData = null;
 let worldColliders = [];
+// smoothed per-frame costs for the __beach read-out: the water library's CPU
+// update, and the frame's whole CPU time up to the render call
+let waterMs = 0;
+let cpuMs = 0;
 
 function bowDir(yaw) {
   return { x: Math.sin(yaw), z: Math.cos(yaw) };
@@ -92,9 +96,9 @@ function bayPreset() {
     exposure: 1.0,
   };
   // Ocean: tropical FFT base with one long, low swell and half the fine
-  // ripples, which wove a visible grid at distance. The wide patch stops the
-  // swell tiling across the 11 km water extent.
-  p.ocean.cascades[0].patchSize = 760;
+  // ripples, which wove a visible grid at distance. The big cascade's patch is
+  // 380 m so the 128 grid keeps 3 m detail (the old 760 m patch was on 256).
+  p.ocean.cascades[0].patchSize = 380;
   p.ocean.cascades[1].waveHeight *= 0.5;
   const swell = (deg, wavelength, amplitude, steepness = 0.42, speed = 1) => {
     const a = (deg * Math.PI) / 180;
@@ -363,6 +367,58 @@ function makeRockIslet(islet) {
   return mesh;
 }
 
+// Topsails for the Dutch ship. The model sets its two course sails but only
+// furls the topsails, so these hang from the two upper yards. Coordinates are
+// the rigging mesh's own (x forward, y up, z athwartships). Every yard is
+// braced about 14 degrees with its +z end forward; `brace` is that slope.
+const TOPSAILS = [
+  { x: -0.76, y: 16.7, head: 4.4, foot: 5.9, drop: 7.9, lean: 0.8, brace: 0.254 },
+  { x: 6.73, y: 15.65, head: 4.3, foot: 5.2, drop: 7.5, lean: -0.07, brace: 0.258 },
+];
+const TOPSAIL_MAT = new THREE.MeshStandardMaterial({
+  color: 0xeadfc4, roughness: 0.92, side: THREE.DoubleSide,
+});
+
+function topsailGeometry({ x, y, head, foot, drop, lean, brace }) {
+  const across = 12, down = 8;
+  const pos = [], uv = [], index = [];
+  for (let i = 0; i <= down; i++) {
+    const t = i / down;                       // 0 at the head, 1 at the foot
+    const width = head + (foot - head) * t;
+    for (let j = 0; j <= across; j++) {
+      const s = j / across;
+      const z = (s - 0.5) * width;
+      // the belly fills toward the bow: deepest mid-sail, flat at the edges
+      const belly = 0.11 * foot * Math.sin(Math.PI * s) * Math.sin(Math.PI * t);
+      pos.push(x + lean * t + brace * z + belly, y - drop * t, z);
+      uv.push(s, 1 - t);
+    }
+  }
+  for (let i = 0; i < down; i++) {
+    for (let j = 0; j < across; j++) {
+      const a = i * (across + 1) + j;
+      const b = a + 1, c = a + across + 1, d = c + 1;
+      index.push(a, c, b, b, c, d);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+  geo.setIndex(index);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+function setTopsails(ship) {
+  const rigging = ship.getObjectByName("dutch_ship_medium_rigging");
+  if (!rigging) throw new Error("ship rigging not found");
+  for (const sail of TOPSAILS) {
+    const mesh = new THREE.Mesh(topsailGeometry(sail), TOPSAIL_MAT);
+    mesh.castShadow = true;
+    rigging.add(mesh);
+  }
+}
+
 async function boot() {
   const canvas = document.getElementById("view");
   canvas.tabIndex = 0;
@@ -462,16 +518,20 @@ async function boot() {
   const water = new Water({
     preset: bayPreset(),
     quality: {
-      simSize: hasGpu ? 256 : 128,
+      // The wave transform runs on the CPU in JavaScript: a 256 grid cost
+      // about 48 ms of every frame on an RX 480. 128 is about 4.5 times cheaper.
+      simSize: 128,
       segments: hasGpu ? 720 : 360,
       detail: hasGpu ? 0.3 : 0.2,
-      sparkle: 0.35,
+      sparkle: 0.6,
       refraction: true,
       foamDetail: true,
       clouds: true,
     },
     extent: 11000,
     lodPower: 2.2,
+    // one wave cascade per frame: each re-synthesis is a CPU transform
+    stagger: true,
   });
   scene.add(water.object);
 
@@ -635,10 +695,10 @@ async function boot() {
   try {
     const scenePass = pass(scene, camera);
     const color = scenePass.getTextureNode("output");
-    // Daylight: only the disc and glitter sit above 1.2, so bloom is a
-    // highlight halo instead of a wash over the whole sky.
-    const tight = bloom(color, 0.32, 0.2, 1.25);
-    const wide = bloom(color, 0.1, 0.5, 1.7);
+    // Daylight: only the disc and glitter sit above 1.25, so one bloom pass is
+    // a highlight halo. A second, wider pass was barely visible and cost
+    // another full-screen blur chain.
+    const halo = bloom(color, 0.38, 0.35, 1.25);
     let graded = color.rgb;
     graded = saturation(graded, 1.12);
     graded = graded.sub(0.5).mul(1.1).add(0.5);
@@ -647,7 +707,7 @@ async function boot() {
     const grain = fract(sin(dot(screenUV, vec2(190.0, 260.0)).add(time)).mul(43758.5453));
     graded = graded.add(grain.sub(0.5).mul(0.004));
     pipeline = new THREE.RenderPipeline(renderer);
-    pipeline.outputNode = vec4(graded, 1.0).add(tight).add(wide);
+    pipeline.outputNode = vec4(graded, 1.0).add(halo);
   } catch (err) {
     console.warn("bloom", err);
     pipeline = null;
@@ -810,6 +870,7 @@ async function boot() {
   }
 
   function frame(timestamp) {
+    const frameStart = performance.now();
     timer.update(timestamp);
     const dt = Math.min(timer.getDelta(), 0.05);
     const elapsed = timer.getElapsed();
@@ -875,10 +936,13 @@ async function boot() {
     if (fireflies) fireflies.update(elapsed);
     if (audio) audio.update(elapsed, { ...shipState, yaw: shipState.yaw }, wildlife?.audioEntities || []);
     if (stormFx) stormFx.update(elapsed, dt, camera, shipRoot);
+    const waterStart = performance.now();
     water.update(elapsed, camera);
+    waterMs += (performance.now() - waterStart - waterMs) * 0.1;
     placeCamera();
     if (pipeline) pipeline.render();
     else renderer.render(scene, camera);
+    cpuMs += (performance.now() - frameStart - cpuMs) * 0.1;
     const shipCameraDist = camera.position.distanceTo(new THREE.Vector3(shipState.x, shipRoot ? shipRoot.position.y : 0, shipState.z));
     window.__beach = {
       ready: !!shipRoot && skullLoaded && archipelagoLoaded && worldColliders.length >= 9,
@@ -888,6 +952,8 @@ async function boot() {
       islands: worldData?.islands.map(({ id, name, x, z, kind }) => ({ id, name, x, z, kind })) || [],
       colliders: worldColliders.length,
       frameMs: dt * 1000,
+      waterMs,
+      cpuMs,
       cameraDistance: shipCameraDist,
       version: CACHE_VERSION,
       wildlifeReady: !!wildlife,
@@ -948,9 +1014,20 @@ async function boot() {
   try {
     const gltf = await loader.loadAsync("beach/dutch-ship.glb");
     const root = gltf.scene.getObjectByName("SHIP") || gltf.scene;
-    prepMesh(root);
-    root.traverse((obj) => {
+    // The model is long along x with the bowsprit at +x, and its meshes sit
+    // 3 m off centre, while the helm treats +z as the bow. Turn it inside a
+    // group so the hull points where it sails and the wake, spray and lanterns
+    // line up with it.
+    const ship = new THREE.Group();
+    for (const part of root.children) part.position.set(0, 0, 0);
+    root.rotation.y = -Math.PI / 2;
+    ship.add(root);
+    prepMesh(ship);
+    setTopsails(ship);
+    ship.traverse((obj) => {
       if (!obj.isMesh || !obj.material) return;
+      // the model's canvas is a dark alpha-masked texture; the banner's sails are cream
+      if (/sails$/i.test(obj.name)) obj.material = TOPSAIL_MAT;
       (Array.isArray(obj.material) ? obj.material : [obj.material]).forEach((m) => {
         const tag = obj.name + (m.name || "");
         if (m.roughness !== undefined && /sail/i.test(tag)) {
@@ -962,9 +1039,9 @@ async function boot() {
         }
       });
     });
-    scene.add(root);
-    shipRoot = root;
-    if (stormFx) stormFx.attachShip(root);
+    scene.add(ship);
+    shipRoot = ship;
+    if (stormFx) stormFx.attachShip(ship);
     const spin = document.getElementById("loadingIndicator");
     if (spin) spin.style.display = "none";
     canvas.focus();

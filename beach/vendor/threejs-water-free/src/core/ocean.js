@@ -85,13 +85,20 @@ export class Ocean {
     });
 
     this.time = 0;
+    // With `stagger`, update() re-synthesises one cascade per call.
+    this.stagger = !!config.stagger;
+    this.tick = 0;
     this._n = new Vector3();
   }
 
   /** Advance and resynthesise the ocean to absolute time `t` (seconds). */
   update(t) {
     this.time = t;
-    for (let i = 0; i < this.cascades.length; i++) {
+    // Staggered: one cascade per call, in turn. Each still evolves to time t,
+    // so waves keep their speed and refresh in alternation.
+    const first = this.stagger ? (this.tick = (this.tick + 1) % this.cascades.length) : 0;
+    const last = this.stagger ? first + 1 : this.cascades.length;
+    for (let i = first; i < last; i++) {
       this.cascades[i].update(t);
       this.displacementTextures[i].needsUpdate = true;
       this.slopeTextures[i].needsUpdate = true;

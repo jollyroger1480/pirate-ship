@@ -292,15 +292,16 @@ export function createStormFX(THREE, scene, opts = {}) {
     return g;
   }
   function attachShip(root) {
+    // ship-local: +z is the bow, the hull is +-2.6 m wide, the stern at z -10.3
     const spots = [
-      [0, 9.5, 7.5], [-6.5, 7.2, -4], [6.5, 7.2, -4], [0, 8.6, -12.5],
+      [0, 9.5, 7.5], [-2.4, 5.2, -3], [2.4, 5.2, -3], [0, 7.6, -10.1],
     ];
     for (const [x, y, z] of spots) root.add(lanternMesh(x, y, z));
     if (!wantLanternLight) return;
     const fore = new THREE.PointLight(0xffb45e, 95, 60, 2);
     fore.position.set(0, 10.5, 8);
     const aft = new THREE.PointLight(0xff9a4a, 80, 55, 2);
-    aft.position.set(0, 9.5, -11);
+    aft.position.set(0, 8.2, -10);
     root.add(fore, aft);
     lanterns.push({ light: fore, ph: 1.3, base: 95 }, { light: aft, ph: 4.1, base: 80 });
   }

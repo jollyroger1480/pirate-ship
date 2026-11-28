@@ -32,6 +32,8 @@ export class Water {
    * @param {number} [options.resolution]      surface grid subdivisions (overrides quality)
    * @param {number} [options.extent=6000]     how far the surface reaches (m)
    * @param {number} [options.lodPower=3.0]    radial LOD warp strength
+   * @param {boolean} [options.stagger=false]  re-synthesise one FFT cascade per
+   *                                           frame (the transform runs on the CPU)
    */
   constructor(options = {}) {
     this.options = options;
@@ -53,6 +55,7 @@ export class Water {
     this.ocean = new Ocean({
       cascades: cfg.ocean.cascades.map((c) => ({ ...c, size: q.simSize })),
       gerstner: cfg.ocean.gerstner,
+      stagger: !!this.options.stagger,
     });
 
     this.skyUniforms = createSkyUniforms({
