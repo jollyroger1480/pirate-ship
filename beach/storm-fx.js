@@ -1,11 +1,18 @@
 /* Storm layer for Skull Island Cove — the Island Zero read:
    charcoal sky, steel-blue chop, mist at every shoreline, warm practicals.
    Everything here is cheap: sprites, points, and a handful of props.
-   createStormFX(THREE, scene, opts) -> { update(t, dt, camera, ship), attachShip(root) } */
+   createStormFX(THREE, scene, opts) -> { update(t, dt, camera, ship), attachShip(root) }
+   opts.mist / glows / rain / torches / lanternLights default true; false skips
+   that layer (a daylight scene turns the night layers off). */
 export function createStormFX(THREE, scene, opts = {}) {
   const heightAt = opts.heightAt || (() => 0);
   const islands = opts.islands || [];
   const anchors = opts.anchors || [];
+  const wantMist = opts.mist !== false;
+  const wantGlows = opts.glows !== false;
+  const wantRain = opts.rain !== false;
+  const wantTorches = opts.torches !== false;
+  const wantLanternLight = opts.lanternLights !== false;
   const rand = (a, b) => a + Math.random() * (b - a);
 
   function canvasTexture(size, draw) {
@@ -62,6 +69,7 @@ export function createStormFX(THREE, scene, opts = {}) {
     mistGroup.add(m);
     mists.push(m);
   }
+  mistGroup.visible = wantMist;
   scene.add(mistGroup);
 
   /* ---------- beacon glows: warm halos on every island light ---------- */
@@ -78,6 +86,7 @@ export function createStormFX(THREE, scene, opts = {}) {
     const gs = big ? 70 : 46;
     glow.scale.set(gs, gs * 0.8, 1);
     glow.userData = { ph: rand(0, 9), base: big ? 0.34 : 0.3 };
+    glow.visible = wantGlows;
     scene.add(glow);
     beaconGlows.push(glow);
   }
@@ -101,6 +110,7 @@ export function createStormFX(THREE, scene, opts = {}) {
     depthWrite: false,
   }));
   rain.frustumCulled = false;
+  rain.visible = wantRain;
   scene.add(rain);
 
   /* ---------- bow spray particles ---------- */
@@ -183,6 +193,8 @@ export function createStormFX(THREE, scene, opts = {}) {
     li.position.y = 2.8;
     g.add(li);
     torchLights.push({ light: li, ph: rand(0, 9), base: 60 });
+    // an invisible group takes its flame sprite and point light with it
+    g.visible = wantTorches;
     props.add(g);
   }
 
@@ -268,13 +280,15 @@ export function createStormFX(THREE, scene, opts = {}) {
       new THREE.MeshBasicMaterial({ color: 0xffd9a0 })
     );
     g.add(core);
-    const glow = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: flameTex, color: 0xffb45e, transparent: true,
-      blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.85,
-    }));
-    glow.scale.set(2.4, 2.4, 1);
-    g.add(glow);
-    lanterns.push({ glow, ph: rand(0, 9) });
+    if (wantLanternLight) {
+      const glow = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: flameTex, color: 0xffb45e, transparent: true,
+        blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.85,
+      }));
+      glow.scale.set(2.4, 2.4, 1);
+      g.add(glow);
+      lanterns.push({ glow, ph: rand(0, 9) });
+    }
     return g;
   }
   function attachShip(root) {
@@ -282,6 +296,7 @@ export function createStormFX(THREE, scene, opts = {}) {
       [0, 9.5, 7.5], [-6.5, 7.2, -4], [6.5, 7.2, -4], [0, 8.6, -12.5],
     ];
     for (const [x, y, z] of spots) root.add(lanternMesh(x, y, z));
+    if (!wantLanternLight) return;
     const fore = new THREE.PointLight(0xffb45e, 95, 60, 2);
     fore.position.set(0, 10.5, 8);
     const aft = new THREE.PointLight(0xff9a4a, 80, 55, 2);
@@ -293,28 +308,32 @@ export function createStormFX(THREE, scene, opts = {}) {
   /* ---------- per-frame ---------- */
   const camCenter = new THREE.Vector3();
   function update(t, dt, camera, ship) {
-    for (const m of mists) {
-      const u = m.userData;
-      m.position.x = u.baseX + Math.sin(t * u.sp + u.ph) * 14;
-      m.position.z = u.baseZ + Math.cos(t * u.sp * 0.8 + u.ph) * 14;
-      m.position.y = 3 + Math.sin(t * 0.05 + u.ph) * 2;
-      m.material.opacity = 0.16 + 0.11 * (0.5 + 0.5 * Math.sin(t * 0.07 + u.ph * 2));
+    if (mistGroup.visible) {
+      for (const m of mists) {
+        const u = m.userData;
+        m.position.x = u.baseX + Math.sin(t * u.sp + u.ph) * 14;
+        m.position.z = u.baseZ + Math.cos(t * u.sp * 0.8 + u.ph) * 14;
+        m.position.y = 3 + Math.sin(t * 0.05 + u.ph) * 2;
+        m.material.opacity = 0.16 + 0.11 * (0.5 + 0.5 * Math.sin(t * 0.07 + u.ph * 2));
+      }
     }
     camera.getWorldPosition(camCenter);
     const cx = camCenter.x, cy = camCenter.y, cz = camCenter.z;
-    const rp = rainGeo.attributes.position.array;
-    for (let i = 0; i < RAIN_N; i++) {
-      const o = i * 6;
-      let y = rp[o + 1] - rainVel[i] * dt;
-      if (y < cy - 8) { seedRain(i, cy + 40); }
-      rp[o] += cx - camCenter.x; rp[o + 1] = y; rp[o + 2] += cz - camCenter.z;
-      rp[o + 3] += cx - camCenter.x; rp[o + 4] = y - RAIN_LEN; rp[o + 5] += cz - camCenter.z;
-      if (rp[o] - cx > 70) { rp[o] -= 140; rp[o + 3] -= 140; }
-      else if (rp[o] - cx < -70) { rp[o] += 140; rp[o + 3] += 140; }
-      if (rp[o + 2] - cz > 70) { rp[o + 2] -= 140; rp[o + 5] -= 140; }
-      else if (rp[o + 2] - cz < -70) { rp[o + 2] += 140; rp[o + 5] += 140; }
+    if (rain.visible) {
+      const rp = rainGeo.attributes.position.array;
+      for (let i = 0; i < RAIN_N; i++) {
+        const o = i * 6;
+        let y = rp[o + 1] - rainVel[i] * dt;
+        if (y < cy - 8) { seedRain(i, cy + 40); }
+        rp[o] += cx - camCenter.x; rp[o + 1] = y; rp[o + 2] += cz - camCenter.z;
+        rp[o + 3] += cx - camCenter.x; rp[o + 4] = y - RAIN_LEN; rp[o + 5] += cz - camCenter.z;
+        if (rp[o] - cx > 70) { rp[o] -= 140; rp[o + 3] -= 140; }
+        else if (rp[o] - cx < -70) { rp[o] += 140; rp[o + 3] += 140; }
+        if (rp[o + 2] - cz > 70) { rp[o + 2] -= 140; rp[o + 5] -= 140; }
+        else if (rp[o + 2] - cz < -70) { rp[o + 2] += 140; rp[o + 5] += 140; }
+      }
+      rainGeo.attributes.position.needsUpdate = true;
     }
-    rainGeo.attributes.position.needsUpdate = true;
     if (ship) {
       const speed = ship.userData.speed || 0;
       if (speed > 4) {
@@ -337,15 +356,19 @@ export function createStormFX(THREE, scene, opts = {}) {
     }
     sprayGeo.attributes.position.needsUpdate = true;
     sprayGeo.attributes.color.needsUpdate = true;
-    for (const fl of torchFlames) {
-      const s = 0.5 + 0.18 * Math.sin(t * 11 + fl.ph) + 0.1 * Math.sin(t * 23 + fl.ph * 2);
-      fl.sprite.scale.set(1.1 * s, 1.7 * s, 1);
+    if (wantTorches) {
+      for (const fl of torchFlames) {
+        const s = 0.5 + 0.18 * Math.sin(t * 11 + fl.ph) + 0.1 * Math.sin(t * 23 + fl.ph * 2);
+        fl.sprite.scale.set(1.1 * s, 1.7 * s, 1);
+      }
+      for (const tl of torchLights) {
+        tl.light.intensity = tl.base * (0.82 + 0.18 * Math.sin(t * 13 + tl.ph) + 0.08 * Math.sin(t * 29 + tl.ph));
+      }
     }
-    for (const tl of torchLights) {
-      tl.light.intensity = tl.base * (0.82 + 0.18 * Math.sin(t * 13 + tl.ph) + 0.08 * Math.sin(t * 29 + tl.ph));
-    }
-    for (const bg of beaconGlows) {
-      bg.material.opacity = bg.userData.base * (0.75 + 0.25 * Math.sin(t * 2.2 + bg.userData.ph));
+    if (wantGlows) {
+      for (const bg of beaconGlows) {
+        bg.material.opacity = bg.userData.base * (0.75 + 0.25 * Math.sin(t * 2.2 + bg.userData.ph));
+      }
     }
     for (const ln of lanterns) {
       if (ln.light) ln.light.intensity = ln.base * (0.85 + 0.15 * Math.sin(t * 9 + ln.ph));

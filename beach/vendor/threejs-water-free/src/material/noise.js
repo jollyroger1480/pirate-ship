@@ -3,11 +3,18 @@
  * 4-octave FBM. Kept dependency-free (no MaterialX) so it behaves identically
  * on the WebGPU and WebGL backends.
  */
-import { Fn, vec2, sin, dot, floor, fract, mix } from 'three/tsl';
+import { Fn, vec2, vec3, dot, floor, fract, mix } from 'three/tsl';
 
-export const hash21 = /*#__PURE__*/ Fn(([p]) =>
-  fract(sin(dot(p, vec2(127.1, 311.7))).mul(43758.5453))
-);
+// Local patch: the original fract(sin(dot(p, …)) * 43758.5453) hash loses all
+// precision once p is more than a few hundred metres from the origin (the sin
+// argument passes 1e9 in float32), which turned shore foam, sparkle and the
+// detail normals into grid-aligned blocks across the cove. This sin-free hash
+// (Hoskins, "hash without sine") stays random at any world coordinate.
+export const hash21 = /*#__PURE__*/ Fn(([p]) => {
+  const p3 = vec3(p.x, p.y, p.x).mul(0.1031).toVar();
+  p3.addAssign(dot(p3, p3.yzx.add(33.33)));
+  return fract(p3.x.add(p3.y).mul(p3.z));
+});
 
 export const valueNoise = /*#__PURE__*/ Fn(([p]) => {
   const i = floor(p);
