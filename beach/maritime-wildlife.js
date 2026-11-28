@@ -98,7 +98,7 @@ function islandInfo(island) {
  * pod rides the ship's bow whenever it has way on, and a few gulls trail it,
  * so wildlife is always near the player — not only at far shores.
  */
-export function createMaritimeWildlife(THREE, scene, worldData, getSeaHeight) {
+export function createMaritimeWildlife(THREE, scene, worldData, getSeaHeight, opts = {}) {
   const random = createWildlifeRandom(worldData?.seed ?? 12012);
   const islands = (Array.isArray(worldData?.islands) ? worldData.islands : [])
     .filter((island) => Number.isFinite(island.x) && Number.isFinite(island.z))
@@ -242,8 +242,10 @@ export function createMaritimeWildlife(THREE, scene, worldData, getSeaHeight) {
   }
 
   // Bow-riding pod: five dolphins in a wedge off the bow when the ship has way
-  // on, falling back to a lazy circle around it when it slows.
-  const bowOffsets = [
+  // on, falling back to a lazy circle around it when it slows. An opts.bowPod
+  // (fore, side) list overrides the wedge and opts.bowLeap the hop height;
+  // side is positive to port, the banner camera's side.
+  const bowOffsets = opts.bowPod || [
     [15, 0], [10, -7.5], [10, 7.5], [21, -4.5], [21, 4.5],
   ];
   for (let i = 0; i < bowOffsets.length; i++) {
@@ -251,6 +253,9 @@ export function createMaritimeWildlife(THREE, scene, worldData, getSeaHeight) {
     animal.fore = bowOffsets[i][0];
     animal.side = bowOffsets[i][1];
     animal.bowPhase = i / bowOffsets.length;
+    animal.leap = opts.bowLeap ?? 2.9;
+    animal.leapWindow = opts.bowLeapWindow ?? 0.16;
+    animal.leapPeriod = opts.bowLeapPeriod ?? 6.5;
     animal.curX = -20 + bowOffsets[i][0];
     animal.curZ = 445 + bowOffsets[i][1];
     animal.node.position.set(animal.curX, 0, animal.curZ);
@@ -258,6 +263,7 @@ export function createMaritimeWildlife(THREE, scene, worldData, getSeaHeight) {
     root.add(animal.node);
   }
   const bowPod = dolphins.slice(-bowOffsets.length);
+  if (opts.debug) window.__bowPodDebug = bowPod;
 
   // Gulls: most circle home shores, a few trail the ship.
   for (let i = 0; i < 20; i++) {
@@ -383,12 +389,12 @@ export function createMaritimeWildlife(THREE, scene, worldData, getSeaHeight) {
         heading = Math.atan2(nx - animal.curX, nz - animal.curZ) || heading;
         animal.curX = nx;
         animal.curZ = nz;
-        const leapCycle = (time / 6.5 + animal.bowPhase) % 1;
-        const leapT = leapCycle < 0.16 ? leapCycle / 0.16 : -1;
+        const leapCycle = (time / animal.leapPeriod + animal.bowPhase) % 1;
+        const leapT = leapCycle < animal.leapWindow ? leapCycle / animal.leapWindow : -1;
         let yOffset = -0.28 + Math.sin(time * 2.4 + animal.bowPhase * TAU) * 0.12;
         let pitch = 0;
         if (leapT >= 0) {
-          yOffset += Math.sin(Math.PI * leapT) * 2.9;
+          yOffset += Math.sin(Math.PI * leapT) * animal.leap;
           pitch = -Math.sin(Math.PI * leapT) * 0.55;
         }
         animal.node.position.set(nx, surfaceAt(nx, nz) + yOffset, nz);

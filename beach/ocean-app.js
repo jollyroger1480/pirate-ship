@@ -14,7 +14,7 @@ import { createMaritimeFireflies } from "./maritime-fireflies.js";
 import { createMaritimeAudio } from "./maritime-audio.js";
 import { createStormFX } from "./storm-fx.js";
 
-const CACHE_VERSION = "banner15";
+const CACHE_VERSION = "banner26";
 const FLOOR = { size: 9000, segments: 288, deepDepth: 52, beachHeight: 6 };
 // One grid covers the whole seabed. Warp it so cells are about a metre wide
 // over the cove and skull island shelves, where clear water shows the bottom,
@@ -90,7 +90,7 @@ function bayPreset() {
     horizonColor: 0xd6e2ea,
     groundColor: 0x8fb0c4,
     rayleigh: 1.3,
-    cloudCoverage: 0.42,
+    cloudCoverage: 0.48,
     cloudColor: 0xfff3e0,
     cloudSpeed: 0.012,
     exposure: 1.0,
@@ -113,7 +113,7 @@ function bayPreset() {
   p.water.shoreDepth = 2.2;
   p.water.waterColor = 0x0a3a6e;
   p.water.sssColor = 0x1fb8a6;
-  p.water.sunShininess = 480;
+  p.water.sunShininess = 320;
   p.water.sssStrength = 0.5;
   p.floor = JSON.parse(JSON.stringify(PRESETS.lagoon.floor));
   // library default is 0.08: 12.5 m caustic cells read as a checkerboard
@@ -521,9 +521,10 @@ async function boot() {
       // The wave transform runs on the CPU in JavaScript: a 256 grid cost
       // about 48 ms of every frame on an RX 480. 128 is about 4.5 times cheaper.
       simSize: 128,
-      segments: hasGpu ? 720 : 360,
+      // the library's own "high" mesh resolution; 720 was above its "ultra"
+      resolution: 440,
       detail: hasGpu ? 0.3 : 0.2,
-      sparkle: 0.6,
+      sparkle: 1.0,
       refraction: true,
       foamDetail: true,
       clouds: true,
@@ -547,7 +548,7 @@ async function boot() {
   const sunDir = water.skyUniforms.sunDirection.value.clone();
   const sun = new THREE.DirectionalLight(0xffe6c4, 2.4);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.mapSize.set(1024, 1024);
   sun.shadow.camera.near = 4;
   sun.shadow.camera.far = 260;
   sun.shadow.camera.left = -70;
@@ -975,7 +976,12 @@ async function boot() {
   }
 
   try {
-    wildlife = createMaritimeWildlife(THREE, scene, worldData, (x, z) => water.getHeight(x, z));
+    // banner shot: the pod swims off the port quarter between camera and
+    // ship, hopping higher - the banner's lower-left dolphins
+    wildlife = createMaritimeWildlife(THREE, scene, worldData, (x, z) => water.getHeight(x, z),
+      window.__beachLook === "banner"
+        ? { bowPod: [[-34, 8], [-30, 12], [-36, 6], [-32, 3], [-28, 10]], bowLeap: 4.2, bowLeapWindow: 0.7, bowLeapPeriod: 5.0 }
+        : undefined);
   } catch (err) {
     console.warn("wildlife", err);
   }

@@ -93,10 +93,12 @@ export function skyColor(direction, u, timeNode, clouds = true) {
     const cloudMask = smoothstep(0.04, 0.35, dir.y);
     const proj = dir.xz.div(max(dir.y, 0.08));
     const motion = vec2(timeNode.mul(u.cloudSpeed), timeNode.mul(u.cloudSpeed).mul(0.6));
-    const n = fbm(proj.mul(1.6).add(motion));
+    // Local patch: higher cloud frequency and a tighter band read as puffy
+    // cumulus; the old 1.6 / 0.25 gave thin streaks.
+    const n = fbm(proj.mul(2.3).add(motion));
     const cloud = smoothstep(
       float(1.0).sub(u.cloudCoverage),
-      float(1.0).sub(u.cloudCoverage).add(0.25),
+      float(1.0).sub(u.cloudCoverage).add(0.16),
       n
     ).mul(cloudMask);
     // Shade clouds by sun proximity for a lit/underside look.
